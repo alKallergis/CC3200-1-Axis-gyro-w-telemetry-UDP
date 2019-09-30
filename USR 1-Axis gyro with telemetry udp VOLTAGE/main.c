@@ -104,7 +104,7 @@ void UDPTRANSMITSETUP(unsigned short usPort);
 void UDPTRANSMIT(void);
 float tdif(unsigned long int m);
 void i2csetupAndTest(void);
-void readI2Crates(void);
+tBoolean readI2Crates(void);
 void calculatecoefficients(void);
 void TimA2AIntHandler(void);
 void TimA2BIntHandler(void);
@@ -734,7 +734,7 @@ void i2csetupAndTest(void){
 
 }
 
-void readI2Crates(void){
+tBoolean readI2Crates(void){
     #ifndef SL_PLATFORM_MULTI_THREADED
                   _SlNonOsMainLoopTask();
     #endif
@@ -742,9 +742,13 @@ void readI2Crates(void){
                       sizeof(INT_STATUS_ADDR),&drdy,1);   // Find whether raw int status is asserted,it is cleared after it is read here
     if(!(drdy&1)){        //no data ready
       NODATA+=1;
+      return false; //exit without new values
       }
     else{
       dataavailable+=1;
+      xrate[1]=xrate[0];    //shift values in fifo
+      yrate[1]=yrate[0];
+      zrate[1]=zrate[0];
       I2C_IF_ReadFrom(itg3205addr,&gyro_x_h,1,i2cbuf,6);      //READ GYRO REGISTERS
       xrate[0]=(i2cbuf[0]<<8|i2cbuf[1])/14.375-xerr;    //new values
       yrate[0]=(i2cbuf[2]<<8|i2cbuf[3])/14.375-yerr;
@@ -760,6 +764,7 @@ void readI2Crates(void){
               zerr=zcumul/1000.0;
               }
       }
+      return true;  //new values have been read
     }
 }
 
@@ -1089,15 +1094,13 @@ void main()
             IntDisable(INT_TIMERA2A);   //disable ints here because we need stable values
             IntDisable(INT_TIMERA2B);
             withinLoop=true;    //when we are within this loop,set flag for testing purposes
-            indeg[1]=indeg[0];
-            xrate[1]=xrate[0];    //shift values in fifo
-            yrate[1]=yrate[0];
-            zrate[1]=zrate[0];
-            readI2Crates();     //read the rates from the gyro in deg/s
-            P=Kp*(indeg[0]-zrate[0]);    //proportional term
-            D=Kd*(indeg[0]-zrate[0]-indeg[1]+zrate[1])/40.0;   //differential
-            outMatchDeg=P+D;
-            outmatch=(outMatchDeg+1500)*80; //using the regular formula now
+            if(readI2Crates()){ //If the sensor is ready,read the rates from the gyro in deg/s
+                indeg[1]=indeg[0];  //shift values in fifo
+                P=Kp*(indeg[0]-zrate[0]);    //proportional term
+                D=Kd*(indeg[0]-zrate[0]-indeg[1]+zrate[1])/40.0;   //differential
+                outMatchDeg=P+D;
+                outmatch=(outMatchDeg+1500)*80; //using the regular formula now
+            }
             withinLoop=false;
             IntEnable(INT_TIMERA2A);    //enable ints again,new values have been set
             IntEnable(INT_TIMERA2B);
@@ -1121,7 +1124,7 @@ void main()
 
         }
 
-        MAP_UtilsDelay(80/5);  //~1us
+        MAP_UtilsDelay(800/5);  //~10us
 
     }
     sl_Close(iSockID);
